@@ -17,7 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -52,10 +51,10 @@ const (
 var _ controller.Provisioner = &efsProvisioner{}
 
 type efsProvisioner struct {
-	allocator  gidallocator.Allocator
 	dnsName    string
 	mountpoint string
 	source     string
+	allocator  gidallocator.Allocator
 }
 
 // NewEFSProvisioner creates an AWS EFS volume provisioner
@@ -71,7 +70,7 @@ func NewEFSProvisioner(client kubernetes.Interface) controller.Provisioner {
 	}
 
 	dnsName := os.Getenv(dnsNameKey)
-	glog.Errorf("%v", dnsName)
+	glog.Errorf("%s", dnsName)
 	if dnsName == "" {
 		dnsName = getDNSName(fileSystemID, awsRegion)
 	}
@@ -96,13 +95,11 @@ func NewEFSProvisioner(client kubernetes.Interface) controller.Provisioner {
 		glog.Warningf("couldn't confirm that the EFS file system exists: %v", err)
 	}
 
-	allocator := gidallocator.NewWithGIDReclaimer(client, newFileSystemReclaimer(mountpoint))
-
 	return &efsProvisioner{
 		dnsName:    dnsName,
 		mountpoint: mountpoint,
 		source:     source,
-		allocator:  allocator,
+		allocator:  gidallocator.NewWithGIDReclaimer(client, newFileSystemReclaimer(mountpoint)),
 	}
 }
 
@@ -130,9 +127,9 @@ func getMount(dnsName string) (string, string, error) {
 
 func reuseVolumesOption(options controller.VolumeOptions) (bool, error) {
 	if reuseStr, ok := options.Parameters["reuseVolumes"]; ok {
-		reuse, err := strconv.ParseBool(options.Parameters["reuseVolumes"])
+		reuse, err := strconv.ParseBool(reuseStr)
 		if err != nil {
-			return false, fmt.Errorf("invalid value %s for parameter reuseVolumes: %v", reuseStr, err)
+			return false, fmt.Errorf("invalid value '%s' for parameter reuseVolumes: %v", reuseStr, err)
 		}
 		return reuse, nil
 	}
@@ -176,9 +173,7 @@ func (p *efsProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 
 		md, err := readVolumeMetadata(volumePath)
 		if err != nil {
-			msg := fmt.Sprintf("failed to read volume metadata for %v: %v", volumePath, err)
-			glog.Error(msg)
-			return nil, errors.New(msg)
+			return nil, logErrorf("failed to read volume metadata for %s: %v", volumePath, err)
 		}
 
 		err = validatePreexistingVolume(options, md, volumePath, existingGid)
@@ -191,17 +186,13 @@ func (p *efsProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 			existingGidInt := int(existingGid)
 			mdGidInt, err := strconv.Atoi(md.GID)
 			if err != nil {
-				msg := fmt.Sprintf("volume metadata contains an invalid GID value: %v", md.GID)
-				glog.Errorf(msg)
-				return nil, errors.New(msg)
+				return nil, logErrorf("volume metadata contains an invalid GID value: %d", md.GID)
 			}
 
 			if existingGidInt == mdGidInt {
 				gid = &existingGidInt
 			} else {
-				msg := fmt.Sprintf("directory %v has a GID of %v, but the volume metadata shows the GID as %v", volumePath, existingGid, md.GID)
-				glog.Error(msg)
-				return nil, errors.New(msg)
+				return nil, logErrorf("directory %s has a GID of %d, but the volume metadata shows the GID as %s", volumePath, existingGid, md.GID)
 			}
 		}
 
@@ -259,7 +250,7 @@ func (p *efsProvisioner) Provision(options controller.VolumeOptions) (*v1.Persis
 
 	remotePath, err := p.getRemotePath(options)
 	if err != nil {
-		glog.Errorf("Failed to get remote path: %v", err)
+		glog.Errorf("failed to get remote path: %s", err)
 		return nil, err
 	}
 
@@ -352,18 +343,16 @@ func (p *efsProvisioner) getDirectoryName(options controller.VolumeOptions) (str
 		return "", err
 	}
 
-	prefix := ""
-
 	if reuseVolumes {
-		if pfx, ok := options.Parameters["volumePrefix"]; ok && pfx != "" {
-			prefix = pfx + "-"
+		prefix := options.Parameters["volumePrefix"]
+		if prefix != "" {
+			prefix = prefix + "-"
 		}
 
 		return prefix + options.PVC.Name + "-" + options.PVC.Namespace, nil
-	} else {
-		return options.PVC.Name + "-" + options.PVName, nil
 	}
 
+	return options.PVC.Name + "-" + options.PVName, nil
 }
 
 // Delete removes the storage asset that was created by Provision represented
@@ -414,7 +403,7 @@ func buildKubeConfig() (*rest.Config, error) {
 		glog.Infof("Either master or kubeconfig specified. building kube config from that..")
 		return clientcmd.BuildConfigFromFlags(master, kubeconfig)
 	} else {
-		glog.Infof("Building kube configs for running in cluster...")
+		glog.Infof("Building kube config for running in cluster...")
 		return rest.InClusterConfig()
 	}
 }

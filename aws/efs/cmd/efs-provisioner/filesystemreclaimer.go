@@ -20,7 +20,7 @@ import (
 var _ gidreclaimer.GIDReclaimer = &fileSystemReclaimer{}
 
 func newFileSystemReclaimer(basePath string) *fileSystemReclaimer {
-	return &fileSystemReclaimer{basePath}
+	return &fileSystemReclaimer{BasePath: basePath}
 }
 
 type fileSystemReclaimer struct {
@@ -33,7 +33,7 @@ func (f *fileSystemReclaimer) Reclaim(classname string, gidtable *allocator.MinM
 
 	entries, err := ioutil.ReadDir(f.BasePath)
 	if err != nil {
-		glog.Errorf("failed to list contents of %v: %v", f.BasePath, err)
+		glog.Errorf("failed to list contents of %s: %v", f.BasePath, err)
 		return err
 	}
 
@@ -46,7 +46,7 @@ func (f *fileSystemReclaimer) Reclaim(classname string, gidtable *allocator.MinM
 
 		md, err := readVolumeMetadata(mddir)
 		if err != nil {
-			glog.Warningf("failed to read volume metadata for %v: %v", mddir, err)
+			glog.Warningf("failed to read volume metadata for %s: %v", mddir, err)
 			continue
 		}
 
@@ -55,28 +55,28 @@ func (f *fileSystemReclaimer) Reclaim(classname string, gidtable *allocator.MinM
 			continue
 		}
 
-		// no GID was previously allocated
-		if md.GID == "" {
-			continue
-		}
-
 		// skip volumes for other storage classes
 		if md.StorageClassName != classname {
 			continue
 		}
 
+		// no GID was previously allocated
+		if md.GID == "" {
+			continue
+		}
+
 		gid, err := strconv.Atoi(md.GID)
 		if err != nil {
-			glog.Errorf("invalid GID value '%v' in metadata for %v", md.GID, mddir)
+			glog.Errorf("invalid GID value '%s' in metadata for %s", md.GID, mddir)
 			continue
 		}
 
 		_, err = gidtable.Allocate(gid)
 		if err == allocator.ErrConflict {
-			glog.Infof("GID %v found in %v was already allocated for storageclass %v", gid, mddir, classname)
+			glog.Infof("gid %d found in %s was already allocated for storageclass %s", gid, mddir, classname)
 			continue
 		} else if err != nil {
-			glog.Errorf("failed to store GID %v found in metadata for %v: %v", gid, mddir, err)
+			glog.Errorf("failed to store GID %d found in metadata for %s: %v", gid, mddir, err)
 			continue
 		}
 	}
@@ -91,34 +91,28 @@ func (f *fileSystemReclaimer) Reclaim(classname string, gidtable *allocator.MinM
 // cluster was destroyed and recreated but the same EFS was reused for the cluster).
 func validatePreexistingVolume(options controller.VolumeOptions, md *volumeMetadata, volumePath string, existingGID uint32) error {
 	if md == nil {
-		msg := fmt.Sprintf("%v already exists but has no volume metadata", volumePath)
-		glog.Error(msg)
-		return errors.New(msg)
+		return logErrorf("%s already exists but has no volume metadata", volumePath)
 	}
 
 	class := helper.GetPersistentVolumeClaimClass(options.PVC)
 	if md.StorageClassName != class {
-		msg := fmt.Sprintf("%v already exists but was created for storage class %v instead of the currently requested storage class of %v",
+		return logErrorf("%s already exists but was created for storage class %s instead of the currently requested storage class of %s",
 			volumePath, md.StorageClassName, class)
-		glog.Error(msg)
-		return errors.New(msg)
 	}
 
 	if md.PVCName != options.PVC.Name || md.PVCNamespace != options.PVC.Namespace {
-		msg := fmt.Sprintf("%v already exists but was created for storage class %v/%v instead of the currently requested storage class of %v/%v",
+		return logErrorf("%s already exists but was created for storage class %s/%s instead of the currently requested storage class of %s/%s",
 			volumePath, md.PVCNamespace, md.PVCName, options.PVC.Namespace, class)
-		glog.Error(msg)
-		return errors.New(msg)
 	}
 
 	if md.GID != "" {
-		mdgid, _ := md.GidAsUInt()
+		mdgid, err := md.GidAsUInt()
+		if err != nil {
+			return logErrorf("metadata for %s contains an invalid gid value '%s'", volumePath, md.GID)
+		}
 
 		if existingGID != mdgid {
-			msg := fmt.Sprintf("%v already exists, but its gid is %v while the volume metadata says the gid should be %v",
-				volumePath, existingGID, mdgid)
-			glog.Error(msg)
-			return errors.New(msg)
+			return logErrorf("%s already exists, but its gid is %d while the volume metadata says the gid should be %d", volumePath, existingGID, mdgid)
 		}
 	}
 
@@ -127,25 +121,23 @@ func validatePreexistingVolume(options controller.VolumeOptions, md *volumeMetad
 
 // volumeExists determines if the given directory already exists, and if so returns the GID
 func volumeExists(path string) (bool, uint32, error) {
-	stat, err := os.Stat(path)
-
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, 0, nil
-		} else {
-			glog.Errorf("Failed to determine if %v already exists: %v", path, err)
-			return false, 0, err
-		}
-	} else {
-		existingGid := stat.Sys().(*syscall.Stat_t).Gid
-
+	if stat, err := os.Stat(path); err == nil {
+		// not likely to occur unless someone is doing something weird
 		if !stat.IsDir() {
-			// not likely to occur unless someone is doing something weird
-			msg := fmt.Sprintf("%v already exists but is a file: %v", path, err)
-			glog.Error(msg)
-			return false, 0, errors.New(msg)
-		} else {
-			return true, existingGid, nil
+			return false, 0, logErrorf("%s already exists but is a file: %v", path, err)
 		}
+
+		return true, stat.Sys().(*syscall.Stat_t).Gid, nil
+	} else if os.IsNotExist(err) {
+		return false, 0, nil
+	} else {
+		return false, 0, logErrorf("Failed to determine if %s already exists: %v", path, err)
 	}
+}
+
+
+func logErrorf(format string, a ...interface{}) error {
+	msg := fmt.Sprintf(format, a...)
+	glog.Error(msg)
+	return errors.New(msg)
 }
