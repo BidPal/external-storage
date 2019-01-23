@@ -48,22 +48,22 @@ func writeVolumeMetadata(dir string, md volumeMetadata) error {
 	return nil
 }
 
-// readVolumeMetadata reads the metadata file in the given directory and returns a *VolumeMetadata with the contents.
+// readVolumeMetadata reads the metadata file in the given directory and returns a *volumeMetadata with the contents.
 func readVolumeMetadata(dir string) (*volumeMetadata, error) {
 	md := &volumeMetadata{}
 	mdpath := getMetaDataPath(dir)
 
-	content, err := ioutil.ReadFile(mdpath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		} else {
-			glog.Errorf("failed to read metadata file %v: %v", mdpath, err)
-			return nil, err
-		}
+	r, err := os.Open(mdpath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		glog.Errorf("failed to read metadata file %v: %v", mdpath, err)
+		return nil, err
 	}
+	defer r.Close()
 
-	if err := json.Unmarshal(content, md); err != nil {
+	dec := json.NewDecoder(r)
+	if err := dec.Decode(md); err != nil {
 		glog.Errorf("failed to unmarshal %v: %v", mdpath, err)
 		return nil, err
 	}
