@@ -367,7 +367,7 @@
 
 [[projects]]
   branch = "ability-to-reclaim-gids"
-  digest = "1:a636ad5709ed13f63eac8fb74da12da78799d769a6c96e4f1da14c0f912b43e8"
+  digest = "1:16495bdb849e26d0ed51c624ae164a680a57921c885ecee6a1f991f91896ee1a"
   name = "github.com/kubernetes-sigs/sig-storage-lib-external-provisioner"
   packages = [
     "allocator",
@@ -379,7 +379,7 @@
     "util",
   ]
   pruneopts = "UT"
-  revision = "0a90a5973471626228fc03f79f4ac52a71ce0589"
+  revision = "7d6640ef83fb3f7364a3c7d0359c7b349a275e4b"
   source = "https://github.com/BidPal/sig-storage-lib-external-provisioner.git"
 
 [[projects]]

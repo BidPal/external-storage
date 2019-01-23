@@ -220,13 +220,10 @@ func (a *Allocator) collectGids(className string, gidTable *allocator.MinMaxAllo
 
 	// if a gid reclaimer was given, call it to allow it to contribute additional GIDs to the gidtable
 	if a.gidReclaimer != nil {
-		glog.Info("Calling GID reclaimer")
 		if err := a.gidReclaimer.Reclaim(className, gidTable); err != nil {
-			glog.Errorf("GID reclaimer failed: %v", err)
+			glog.Errorf("gid reclaimer failed: %v", err)
 			return err
 		}
-	} else {
-		glog.Info("No GID reclaimer was given, skipping")
 	}
 
 	return nil
